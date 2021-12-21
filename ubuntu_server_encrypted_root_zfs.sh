@@ -1,5 +1,5 @@
 #!/bin/bash
-##Script date: 2021-07-17
+##Script date: 2021-12-21
 
 set -euo pipefail
 set -x
@@ -145,7 +145,7 @@ ipv6_apt_live_iso_fix(){
 debootstrap_part1_Func(){
 	##use closest mirrors
 	cp /etc/apt/sources.list /etc/apt/sources.list.bak
-	#sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+	sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
 	sed -i -e 's/http:\/\/archive/mirror:\/\/mirrors/' -e 's/\/ubuntu\//\/mirrors.txt/' /etc/apt/sources.list
 	sed -i '/mirrors/ s,main restricted,main restricted universe multiverse,' /etc/apt/sources.list
 	cat /etc/apt/sources.list
@@ -523,9 +523,12 @@ systemsetupFunc_part3(){
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		
-		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
+		DEBIAN_FRONTEND=noninteractive apt-get -yq install kexec-tools
 		apt install --yes dpkg-dev git systemd-sysv
 		
+		bootctl install ##Install systemd-boot bootloader to the EFI partition.
+		mkdir -p /boot/efi/EFI/Linux
+
 		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
 
@@ -570,21 +573,21 @@ systemsetupFunc_part4(){
 					Components:
 					  ImageDir: /boot/efi/EFI/ubuntu
 					  Versions: false
-					  Enabled: true
+					  Enabled: false 
 					  syslinux:
 					    Config: /boot/syslinux/syslinux.cfg
 					    Enabled: false
 					EFI:
-					  ImageDir: /boot/efi/EFI/ubuntu
+					  ImageDir: /boot/efi/EFI/Linux
 					  Versions: false
-					  Enabled: false
+					  Enabled: true
 					Kernel:
 					  CommandLine: ro quiet loglevel=0
 				EOF
 			
-                if [ "$quiet_boot" = "no" ]; then
-                    sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
-                fi
+                		if [ "$quiet_boot" = "no" ]; then
+                    			sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
+                		fi
 
 				##omit systemd dracut modules to prevent ZBM boot breaking
 				cat <<-EOF >> /etc/zfsbootmenu/dracut.conf.d/zfsbootmenu.conf
@@ -602,20 +605,36 @@ systemsetupFunc_part4(){
 				##Generate ZFSBootMenu
 				generate-zbm
 				
-				##Create refind_linux.conf
-				##zfsbootmenu command-line parameters:
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
-				cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
-					"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
-					"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
-				EOF
+				refind_conf(){
+					##Create refind_linux.conf
+					##zfsbootmenu command-line parameters:
+					##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
+					cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
+						"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
+						"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
+					EOF
 				
-				if [ "$quiet_boot" = "no" ]; then
-                    sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
-                fi
+					if [ "$quiet_boot" = "no" ]; then
+                    				sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+                			fi
+				}
+				#refind_conf
+
+				systemd-boot_conf(){
+					mkdir -p /boot/efi/loader
+					cat <<-EOF > /boot/efi/loader/loader.conf
+						default ubuntu
+						timeout 5
+						console-mode max
+						editor yes
+					EOF
+
+				}
+				systemd-boot_conf
 
 			}
 			config_zbm	
+		
 		}
 		zfsbootmenuinstall
 
