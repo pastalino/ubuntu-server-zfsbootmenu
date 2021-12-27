@@ -1035,7 +1035,7 @@ postreboot(){
 	pyznapinstall #Snapshot management.
 	
 	if [ "$boot_manager" = "systemd-boot" ];
-	then zectl_install;
+	then zectlinstall;
 	else true
 	fi
 
