@@ -58,7 +58,8 @@ zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a s
 zfs_compression="zstd" #lz4 is the zfs default; zstd may offer better compression at a cost of higher cpu usage.
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
 remoteaccess="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
-timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
+boot_manager="systemd-boot" #"systemd-boot" is needed for zectl boot environment utility compatibility. Alternative is "rEFInd".
+timeout_boot_manager="5" #Timeout in seconds for boot screen until default choice selected.
 timeout_zbm_no_remote_access="15" #Timeout in seconds for zfsbootmenu when no remote access enabled.
 timeout_zbm_remote_access="30" #Timeout in seconds for zfsbootmenu when remote access enabled.
 quiet_boot="yes" #Set to no to show boot sequence.
@@ -306,7 +307,8 @@ debootstrap_installminsys_Func(){
 
 remote_zbm_access_Func(){
 	modulesetup="/usr/lib/dracut/modules.d/60crypt-ssh/module-setup.sh"
-	cat <<-EOH >/tmp/remote_zbm_access.sh
+	remote_zbm_access_script_loc="/tmp/remote_zbm_access.sh"
+	cat <<-EOH >"$remote_zbm_access_script_loc"
 		#!/bin/sh
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Remote-Access-to-ZBM
 		apt install -y dracut-network dropbear
@@ -330,13 +332,13 @@ remote_zbm_access_Func(){
 		mkdir -p /etc/cmdline.d
 		echo "ip=dhcp rd.neednet=1" > /etc/cmdline.d/dracut-network.conf ##Replace "dhcp" with specific IP if needed.
 		
-		##Create zfsbootmenu starter script.
-		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/zbm
-			#!/bin/sh
-			rm /zfsbootmenu/active
-			zfsbootmenu
-		EOF
-		chmod 755 /etc/zfsbootmenu/dracut.conf.d/zbm
+		##Create zfsbootmenu starter script. **Superseded owing to upstream changes**
+		#cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/zbm
+		#	#!/bin/sh
+		#	rm /zfsbootmenu/active
+		#	zfsbootmenu
+		#EOF
+		#chmod 755 /etc/zfsbootmenu/dracut.conf.d/zbm
 		
 		##add remote session welcome message
 		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/banner.txt
@@ -347,9 +349,9 @@ remote_zbm_access_Func(){
 		
 		##Copy files into initramfs
 		sed -i '$ s,^},,' "$modulesetup"
-		echo "  ##Copy ZFSBootMenu start helper script" | tee -a "$modulesetup"
-		echo "  inst /etc/zfsbootmenu/dracut.conf.d/zbm /usr/bin/zbm" | tee -a "$modulesetup"
-		echo "" | tee -a "$modulesetup"
+		#echo "  ##Copy ZFSBootMenu start helper script" | tee -a "$modulesetup"
+		#echo "  inst /etc/zfsbootmenu/dracut.conf.d/zbm /usr/bin/zbm" | tee -a "$modulesetup"
+		#echo "" | tee -a "$modulesetup"
 		echo "  ##Copy dropbear welcome message" | tee -a "$modulesetup"
 		echo "  inst /etc/zfsbootmenu/dracut.conf.d/banner.txt /etc/banner.txt" | tee -a "$modulesetup"
 		echo "}" | tee -a "$modulesetup"
@@ -375,18 +377,22 @@ remote_zbm_access_Func(){
 			#dropbear_acl=/home/${user}/.ssh/authorized_keys
 		EOF
 		
-		##Reduce timer on initial rEFInd screen
-		sed -i 's,timeout 20,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
-		
-		##Increase ZFSBootMenu timer to allow for remote connection
-		sed -i 's,zbm.timeout=$timeout_zbm_no_remote_access,zbm.timeout=$timeout_zbm_remote_access,' /boot/efi/EFI/ubuntu/refind_linux.conf
-		
 		systemctl stop dropbear
 		systemctl disable dropbear
+		
+		##Adjust ZFSBootMenu menu access timer for remote connection
+		sed -i 's,zbm.timeout=$timeout_zbm_no_remote_access,zbm.timeout=$timeout_zbm_remote_access,' /etc/zfsbootmenu/config.yaml
 		
 		generate-zbm --debug
 	EOH
 	
+	if [ "$boot_manager" = "rEFInd" ];
+	then
+		sed -i 's,/etc/zfsbootmenu/config.yaml,/boot/efi/EFI/ubuntu/refind_linux.conf' "$remote_zbm_access_script_loc"
+	else
+		true
+	fi
+
 	case "$1" in
 	chroot)
 		cp /tmp/remote_zbm_access.sh "$mountpoint"/tmp
@@ -408,7 +414,7 @@ systemsetupFunc_part1(){
 	##4. System configuration
 	##4.1 configure hostname
 	echo "$hostname" > "$mountpoint"/etc/hostname
-	echo 127.0.1.1       "$hostname" >> "$mountpoint"/etc/hosts
+	echo "127.0.1.1       $hostname" >> "$mountpoint"/etc/hosts
 	
 	##4.2 configure network interface
 	
@@ -565,6 +571,8 @@ systemsetupFunc_part4(){
 				
 			##configure zfsbootmenu
 			config_zbm(){
+				##zfsbootmenu config parameters:
+				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/generate-zbm.5.pod
 				cat <<-EOF > /etc/zfsbootmenu/config.yaml
 					Global:
 					  ManageImages: true
@@ -582,7 +590,7 @@ systemsetupFunc_part4(){
 					  Versions: false
 					  Enabled: true
 					Kernel:
-					  CommandLine: ro quiet loglevel=0
+					  CommandLine: ro quiet loglevel=0 zbm.timeout=$timeout_zbm_no_remote_access
 				EOF
 			
                 		if [ "$quiet_boot" = "no" ]; then
@@ -617,21 +625,31 @@ systemsetupFunc_part4(){
 					if [ "$quiet_boot" = "no" ]; then
                     				sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
                 			fi
+					
+					##Adust timer on initial boot manager screen
+					sed -i 's,timeout 20,timeout $timeout_boot_manager,' /boot/efi/EFI/refind/refind.conf
 				}
-				#refind_conf
 
 				systemd-boot_conf(){
 					mkdir -p /boot/efi/loader
 					cat <<-EOF > /boot/efi/loader/loader.conf
 						default ubuntu
-						timeout 5
+						timeout "$timeout_boot_manager"
 						console-mode max
 						editor yes
 					EOF
 
 				}
-				systemd-boot_conf
 
+				if "$boot_manager"="systemd-boot";
+				then
+					systemd-boot_conf
+				else
+					if "$boot_manager"="rEFInd"
+					then refind_conf
+					else exit 1
+					fi
+				fi
 			}
 			config_zbm	
 		
@@ -851,6 +869,27 @@ pyznapinstall(){
 	snapshotmanagement
 }
 
+zectlinstall(){
+	##Install zectl zfs boot environment manager.
+	##Only supports systemd-boot boot loader.
+	##https://github.com/johnramsden/zectl/blob/master/docs/BUILDING.md
+
+	mkdir -p /tmp/zectl
+	cd /tmp
+	git clone https://github.com/johnramsden/zectl.git
+
+	cd /tmp/zectl
+	apt update
+	apt install -y cmake check libzfslinux-dev
+
+	mkdir build && cd build
+	cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DPLUGINS_DIRECTORY=/usr/share/zectl/libze_plugin
+
+	make
+	#make DESTDIR="release/" install
+	make DESTDIR="" install ##install direct to final locations
+}
+
 setupremoteaccess(){
 	if [ -f /etc/zfsbootmenu/dracut.conf.d/dropbear.conf ];
 	then echo "Remote access already appears to be installed owing to the presence of /etc/zfsbootmenu/dracut.conf.d/dropbear.conf. Install cancelled."
@@ -995,6 +1034,11 @@ postreboot(){
 	dpkg-reconfigure keyboard-configuration && setupcon #Configure keyboard and console.
 	pyznapinstall #Snapshot management.
 	
+	if [ "$boot_manager" = "systemd-boot" ];
+	then zectl_install;
+	else true
+	fi
+
 	echo "Install complete."
 }
 
