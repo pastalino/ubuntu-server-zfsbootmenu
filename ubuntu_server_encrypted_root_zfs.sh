@@ -360,17 +360,25 @@ debootstrap_part1_Func(){
 		do
 			echo "Creating partitions on disk ${diskidnum}."
 			##2.3 create bootloader partition
+			# part1 - EFI
 			sgdisk -n1:1M:+"$EFI_boot_size"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
+
+			# Creating legacy boot partition on disk
+			# part4 - bios boot
+			#sgdisk -a1 -n4:24K:+1000K -t4:EF02 /dev/disk/by-id/"${diskidnum}"
+			sgdisk -a1 -n4:-"$EFI_boot_size"M:0 -t4:EF02 /dev/disk/by-id/"${diskidnum}"
 		
 			##2.4 create swap partition 
 			##bug with swap on zfs zvol so use swap on partition:
 			##https://github.com/zfsonlinux/zfs/issues/7734
 			##hibernate needs swap at least same size as RAM
 			##hibernate only works with unencrypted installs
+			# part2 - swap
 			sgdisk -n2:0:+"$swap_size"M -t2:"$swap_hex_code" /dev/disk/by-id/"${diskidnum}"
 		
 			##2.6 Create root pool partition
 			##Unencrypted or ZFS native encryption:
+			# part3 - zfs rpool
 			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
 		
 		done < /tmp/diskid_check_"${pool}".txt
@@ -481,6 +489,8 @@ debootstrap_createzfspools_Func(){
 		##https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/Debian%20Buster%20Root%20on%20ZFS.html#step-3-system-installation
 		##"-o canmount=off" is for a system directory that should rollback with the rest of the system.
 		
+		# -- do i need all this datasets????
+
 		zfs create	"$RPOOL"/srv 						##server webserver content
 		zfs create -o canmount=off	"$RPOOL"/usr
 		zfs create	"$RPOOL"/usr/local					##locally compiled software
@@ -720,58 +730,77 @@ systemsetupFunc_part3(){
 	
 	identify_ubuntu_dataset_uuid
 
-	mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"$DISKID"-part1 
-	sleep 2
-	blkid_part1=""
-	blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${DISKID}"-part1)"
-	echo "$blkid_part1"
-	
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##4.7 Create the EFI filesystem
+	# -- Schleife einbauen, damit der bootloader aufmehreren Disks installiert ist
+	#while IFS= read -r diskidnum;
+	#		do
 
-		##create FAT32 filesystem in EFI partition
-		apt install --yes dosfstools
-		
-		mkdir -p /boot/efi
-		
-		##fstab entries
-		
-		echo /dev/disk/by-uuid/"$blkid_part1" \
-			/boot/efi vfat \
-			defaults \
-			0 0 >> /etc/fstab
-		
-		##mount from fstab entry
-		mount /boot/efi
-		##If mount fails error code is 0. Script won't fail. Need the following check.
-		##Could use "mountpoint" command but not all distros have it. 
-		if grep /boot/efi /proc/mounts; then
-			echo "/boot/efi mounted."
-		else
-			echo "/boot/efi not mounted."
-			exit 1
-		fi
-	EOCHROOT
+	#		done < /tmp/diskid_check_root.txt /tmp/diskid_check_"${pool}".txt
 
 
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		
-		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
-		apt install --yes dpkg-dev git systemd-sysv
-		
-		##Adjust timer on initial rEFInd screen
-		sed -i 's,^timeout .*,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
 
-		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
-		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
+	# install boot loader on 2 disks
+	# improvement for single topology required
+	tail -n 2 /tmp/diskid_check_root.txt > /tmp/diskid_check_root_bootloader.txt
+	cp /tmp/diskid_check_root_bootloader.txt /tmp/diskid_check_root_bootloader.tmp
 
-		apt install -y dracut-core ##core dracut components only for zbm initramfs 
+	while IFS= read -r diskidnum
+	do
 
-	EOCHROOT
+		diskidbl="$(sed -n "${diskidnum}"p /tmp/diskid_check_root_bootloader.tmp | awk '{ print $1}')"
 
+		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidbl}"-part1
+		sleep 2
+		blkid_part1=""
+		blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${diskidbl}"-part1)"
+		echo "$blkid_part1"
+
+		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			##4.7 Create the EFI filesystem
+
+			##create FAT32 filesystem in EFI partition
+			apt install --yes dosfstools
+
+			mkdir -p /boot/efi"${diskidnum}"
+
+			##fstab entries
+
+			echo /dev/disk/by-uuid/"$blkid_part1" \
+				/boot/efi"${diskidnum}" vfat \
+				defaults \
+				0 0 >> /etc/fstab
+
+			##mount from fstab entry
+			mount /boot/efi"${diskidnum}"
+			##If mount fails error code is 0. Script won't fail. Need the following check.
+			##Could use "mountpoint" command but not all distros have it.
+			if grep /boot/efi"${diskidnum}" /proc/mounts; then
+				echo "/boot/efi"${diskidnum}" mounted."
+			else
+				echo "/boot/efi"${diskidnum}" not mounted."
+				exit 1
+			fi
+		EOCHROOT
+
+
+		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+
+			DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
+			apt install --yes dpkg-dev git systemd-sysv
+
+			##Adjust timer on initial rEFInd screen
+			sed -i 's,^timeout .*,timeout $timeout_rEFInd,' /boot/efi"${diskidnum}"/EFI/refind/refind.conf
+
+			echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
+			sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
+
+			apt install -y dracut-core ##core dracut components only for zbm initramfs
+
+		EOCHROOT
+	done < /tmp/diskid_check_root_bootloader.txt
 }
 
 systemsetupFunc_part4(){
+	# -- Schleife wird vielleicht benötigt, weil in systemsetupFunc_part3() auch eine Schleife eingebaut wurde
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		zfsbootmenuinstall(){
 
@@ -802,6 +831,7 @@ systemsetupFunc_part4(){
 			compile_zbm_git
 				
 			##configure zfsbootmenu
+			## manpage for generate-zbm: https://github.com/zbm-dev/zfsbootmenu/blob/master/docs/pod/generate-zbm.5.pod
 			config_zbm(){
 				cat <<-EOF > /etc/zfsbootmenu/config.yaml
 					Global:
