@@ -296,7 +296,6 @@ debootstrap_part1_Func(){
 	sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
 	sed -i \
 		-e 's/http:\/\/archive/mirror:\/\/mirrors/' \
-		-e 's/\/ubuntu\//\/mirrors.txt/' \
 		-e '/mirrors/ s,main restricted,main restricted universe multiverse,' \
 		/etc/apt/sources.list
 	cat /etc/apt/sources.list
