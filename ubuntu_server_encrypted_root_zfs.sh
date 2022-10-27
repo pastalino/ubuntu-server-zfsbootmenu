@@ -1365,6 +1365,15 @@ createdatapool(){
 
 ##--------
 logFunc
+
+echo ""
+echo "----------------------"
+echo ""
+echo "SCRIPT START"
+echo ""
+echo "----------------------"
+echo ""
+
 date
 resettime(){
 	##Manual reset time to correct out of date virtualbox clock
@@ -1377,18 +1386,31 @@ resettime(){
 #resettime
 
 initialinstall(){
+	echo "$(date +%FT%T%:z) - initialinstall - func: disclaimer"
 	disclaimer
+	echo "$(date +%FT%T%:z) - initialinstall - func: getdiskID_pool"
 	getdiskID_pool "root"
+	echo "$(date +%FT%T%:z) - initialinstall - func: ipv6_apt_live_iso_fix"
 	ipv6_apt_live_iso_fix #Only if ipv6_apt_fix_live_iso variable is set to "yes".
+	echo "$(date +%FT%T%:z) - initialinstall - func: debootstrap_part1_Func"
 	debootstrap_part1_Func
+	echo "$(date +%FT%T%:z) - initialinstall - func: debootstrap_createzfspools_Func"
 	debootstrap_createzfspools_Func
+	echo "$(date +%FT%T%:z) - initialinstall - func: debootstrap_installminsys_Func"
 	debootstrap_installminsys_Func
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part1"
 	systemsetupFunc_part1 #Basic system configuration.
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part2"
 	systemsetupFunc_part2 #Install zfs.
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part3"
 	systemsetupFunc_part3 #Format EFI partition. 
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part4"
 	systemsetupFunc_part4 #Install zfsbootmenu.
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part5"
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part6"
 	systemsetupFunc_part6 #ZFS file system mount ordering.
+	echo "$(date +%FT%T%:z) - initialinstall - func: systemsetupFunc_part7"
 	systemsetupFunc_part7 #Samba.
 	
 	logcopy(){
@@ -1419,6 +1441,8 @@ postreboot(){
 	echo "Install complete: ${distro_variant}."
 }
 
+
+
 case "${1-default}" in
 	initial)
 		echo "Running initial install. Press Enter to Continue or CTRL+C to abort."
@@ -1446,4 +1470,13 @@ case "${1-default}" in
 esac
 
 date
+
+echo ""
+echo "----------------------"
+echo ""
+echo "SCRIPT END"
+echo ""
+echo "----------------------"
+echo ""
+
 exit 0
